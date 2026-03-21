@@ -1,5 +1,6 @@
 import asyncio
 import os
+import utilities
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
@@ -30,7 +31,8 @@ async def echo_list(message: Message):
 
 @dp.message(F.text.lower() == "погода")
 async def weather(message: Message):
-    await message.answer('Солнце ебать')
+    data = utilities.weather()
+    await message.answer(f'Данные о погоде:\n{data}')
 
 
 @dp.message(F.text.lower() == "деньги")
