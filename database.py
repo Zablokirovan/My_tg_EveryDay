@@ -32,3 +32,14 @@ async def record_data_user(data: list):
             """,
             data[0], data[1], data[2]
         )
+
+
+async def writing_note_user(data):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO tg_bot_strih.writing_note_user (user_id, date_create, text, date_complete)
+            VALUES ($1, $2, $3, $4)
+            """,
+            data[0], data[1], data[2], data[3]
+        )

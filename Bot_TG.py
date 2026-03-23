@@ -9,6 +9,7 @@ from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, Callback
 from aiogram_calendar import SimpleCalendar, SimpleCalendarCallback
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
+from datetime import datetime
 
 import utilities
 
@@ -37,7 +38,6 @@ async def cmd_start(message: Message):
         user.username,
         user.first_name
     ]
-    print(data)
     await database.record_data_user(data)
     await message.answer(f"👋Привет, я Штрих\n📝Буду записывать таски и информировать тебя\n Вот что я пока умею",
                          reply_markup=button)
@@ -109,7 +109,18 @@ async def process_calendar(
 async def save_note(message: Message, state: FSMContext):
     user_data = await state.get_data()
     selected_date = user_data.get("selected_date")
+    selected_date = datetime.strptime(selected_date, "%d.%m.%Y").date()
     note_text = message.text
+    date_create=datetime.now()
+
+    data = [message.from_user.id,
+            date_create,
+            note_text,
+            selected_date]
+
+    print(data)
+
+    await database.writing_note_user(data)
 
     await message.answer(
         f"📝 Заметка сохранена:\n"
