@@ -22,8 +22,13 @@ async def get_data():
         rows = await conn.fetch("SELECT * FROM tg_bot_strih.user_info")
         return rows
 
+
 async def record_data_user(data: list):
     async with pool.acquire() as conn:
-        rows = await conn.fetch("INSERT INTO tg_bot_strih.user_info"
-                                "VALUES (s%, s%, s%)",data)
-        return rows
+        await conn.execute(
+            """
+            INSERT INTO tg_bot_strih.user_info (id_user, user_name, first_name)
+            VALUES ($1, $2, $3)
+            """,
+            data[0], data[1], data[2]
+        )

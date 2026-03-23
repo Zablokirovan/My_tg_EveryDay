@@ -32,10 +32,13 @@ class ReminderState(StatesGroup):
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     user = message.from_user
-    user_data = [user.id, user.username, user.first_name]
-    rows = await database.get_data()
-    print(rows)
-
+    data = [
+        user.id,
+        user.username,
+        user.first_name
+    ]
+    print(data)
+    await database.record_data_user(data)
     await message.answer(f"👋Привет, я Штрих\n📝Буду записывать таски и информировать тебя\n Вот что я пока умею",
                          reply_markup=button)
 
