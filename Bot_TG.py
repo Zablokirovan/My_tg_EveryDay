@@ -32,7 +32,22 @@ async def echo_list(message: Message):
 @dp.message(F.text.lower() == "погода")
 async def weather(message: Message):
     data = utilities.weather()
-    await message.answer(f'Данные о погоде:\n{data}')
+    temp = data['main']['temp']
+    if temp >= 30:
+        emoji = "🥵"
+    elif temp >= 25:
+        emoji = "😓"
+    elif 15 <= temp < 25:
+        emoji = "🥴"
+    elif temp <= -10:
+        emoji = "🥶"
+    else:
+        emoji = "🙂"
+    await message.answer(f'🌤 Погода в Алматы:\nТемпература: {data['main']['temp']} °C {emoji}\n'
+                         f'Ощущение: {data['main']['feels_like']} °C\n'
+                         f'Описание: {data['weather'][0]['description']} \n'
+                         f'💧Влажность: {data['main']['humidity']} %\n'
+                         f'💨Ветер: {data['wind']['speed']} м/с')
 
 
 @dp.message(F.text.lower() == "деньги")

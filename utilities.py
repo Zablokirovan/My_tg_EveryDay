@@ -7,5 +7,5 @@ load_dotenv()
 def weather():
      response = requests.get(os.getenv("WEATHER_URL"))
 
-     print(response.status_code)
+     print(response.json())
      return response.json()
