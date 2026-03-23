@@ -1,5 +1,6 @@
 import asyncio
 import os
+import database
 
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F
@@ -32,6 +33,8 @@ class ReminderState(StatesGroup):
 async def cmd_start(message: Message):
     user = message.from_user
     user_data = [user.id, user.username, user.first_name]
+    rows = await database.get_data()
+    print(rows)
 
     await message.answer(f"👋Привет, я Штрих\n📝Буду записывать таски и информировать тебя\n Вот что я пока умею",
                          reply_markup=button)
@@ -116,6 +119,7 @@ async def save_note(message: Message, state: FSMContext):
 
 async def main():
     bot = Bot(token=str(TOKEN))
+    await database.create_pool()
     await dp.start_polling(bot)
 
 
