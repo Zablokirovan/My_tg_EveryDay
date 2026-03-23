@@ -1,5 +1,6 @@
 import asyncio
 import os
+import utilities
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
@@ -30,7 +31,23 @@ async def echo_list(message: Message):
 
 @dp.message(F.text.lower() == "погода")
 async def weather(message: Message):
-    await message.answer('Солнце ебать')
+    data = utilities.weather()
+    temp = data['main']['temp']
+    if temp >= 30:
+        emoji = "🥵"
+    elif temp >= 25:
+        emoji = "😓"
+    elif 15 <= temp < 25:
+        emoji = "🥴"
+    elif temp <= -10:
+        emoji = "🥶"
+    else:
+        emoji = "🙂"
+    await message.answer(f'🌤 Погода в Алматы:\nТемпература: {data['main']['temp']} °C {emoji}\n'
+                         f'Ощущение: {data['main']['feels_like']} °C\n'
+                         f'Описание: {data['weather'][0]['description']} \n'
+                         f'💧Влажность: {data['main']['humidity']} %\n'
+                         f'💨Ветер: {data['wind']['speed']} м/с')
 
 
 @dp.message(F.text.lower() == "деньги")
