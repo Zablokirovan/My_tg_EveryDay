@@ -52,7 +52,11 @@ async def weather(message: Message):
 
 @dp.message(F.text.lower() == "деньги")
 async def money(message: Message):
-    await message.answer('Нищета')
+    data = utilities.money()
+    await message.answer(f"💱 Курсы валют:\n"
+                         f"🇺🇸(USD) - {data["USD"]}₸\n"
+                         f"🇪🇺(EUR) - {data["EUR"]}₸\n"
+                         f"🇷🇺(RUB) -{data["RUB"]}₸")
 
 
 async def main():
