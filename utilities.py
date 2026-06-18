@@ -1,26 +1,28 @@
-import requests
+import aiohttp
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-def weather():
-     response = requests.get(os.getenv("WEATHER_URL"))
-     return response.json()
+
+async def weather():
+    async with aiohttp.ClientSession() as session:
+        async with session.get(os.getenv("WEATHER_URL")) as response:
+            response.raise_for_status()
+            return await response.json()
 
 
-def money():
+async def money():
     urls = {
         "USD": os.getenv("MONEY_USD"),
         "EUR": os.getenv("MONEY_EUR"),
         "RUB": os.getenv("MONEY_RUB"),
     }
     result = {}
-    for currency, url in urls.items():
-
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
-        result[currency] = round(data["rates"]["KZT"], 2)
-
+    async with aiohttp.ClientSession() as session:
+        for currency, url in urls.items():
+            async with session.get(url) as response:
+                response.raise_for_status()
+                data = await response.json()
+                result[currency] = round(data["rates"]["KZT"], 2)
     return result
