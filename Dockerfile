@@ -5,6 +5,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY Bot_TG.py database.py payments.py utilities.py ./
+COPY Bot_TG.py database.py payments.py utilities.py cycle.py keyboards.py ./
 
 CMD ["python", "Bot_TG.py"]
