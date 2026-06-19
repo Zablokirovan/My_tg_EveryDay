@@ -36,6 +36,20 @@ async def _migrate():
                 END IF;
             END $$;
         """)
+        # Добавить поле повтора если нет
+        await conn.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'tg_bot_strih'
+                      AND table_name   = 'writing_note_user'
+                      AND column_name  = 'repeat'
+                ) THEN
+                    ALTER TABLE tg_bot_strih.writing_note_user
+                        ADD COLUMN repeat VARCHAR(10);
+                END IF;
+            END $$;
+        """)
         # Таблица оплат
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS tg_bot_strih.payments (
@@ -45,9 +59,33 @@ async def _migrate():
                 category       VARCHAR(50)    DEFAULT 'other',
                 planned_amount DECIMAL(12, 2) NOT NULL,
                 planned_date   DATE           NOT NULL,
+                day_of_month   SMALLINT,
                 paid_date      DATE,
                 paid_amount    DECIMAL(12, 2),
                 created_at     TIMESTAMP      DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'tg_bot_strih'
+                      AND table_name   = 'payments'
+                      AND column_name  = 'day_of_month'
+                ) THEN
+                    ALTER TABLE tg_bot_strih.payments
+                        ADD COLUMN day_of_month SMALLINT;
+                END IF;
+            END $$;
+        """)
+        # Таблица затрат
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS tg_bot_strih.expenses (
+                id          SERIAL PRIMARY KEY,
+                user_id     BIGINT         NOT NULL,
+                description VARCHAR(255)   NOT NULL,
+                amount      DECIMAL(12, 2) NOT NULL,
+                created_at  TIMESTAMP      DEFAULT NOW()
             )
         """)
 
@@ -68,14 +106,14 @@ async def record_data_user(data: list):
 
 # ─── Заметки / задачи ────────────────────────────────────────────────────────
 
-async def writing_note_user(data: list):
+async def writing_note_user(user_id: int, date_create, text: str, date_complete, repeat: str = None):
     async with pool.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO tg_bot_strih.writing_note_user (user_id, date_create, text, date_complete)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO tg_bot_strih.writing_note_user (user_id, date_create, text, date_complete, repeat)
+            VALUES ($1, $2, $3, $4, $5)
             """,
-            data[0], data[1], data[2], data[3]
+            user_id, date_create, text, date_complete, repeat
         )
 
 
@@ -83,12 +121,24 @@ async def get_user_notes(user_id: int):
     async with pool.acquire() as conn:
         return await conn.fetch(
             """
-            SELECT id, text, date_complete
+            SELECT id, text, date_complete, repeat
             FROM tg_bot_strih.writing_note_user
             WHERE user_id = $1
             ORDER BY date_complete ASC
             """,
             user_id
+        )
+
+
+async def get_note_by_id(note_id: int):
+    async with pool.acquire() as conn:
+        return await conn.fetchrow(
+            """
+            SELECT id, user_id, text, date_complete, repeat
+            FROM tg_bot_strih.writing_note_user
+            WHERE id = $1
+            """,
+            note_id
         )
 
 
@@ -104,6 +154,19 @@ async def get_notes_due_today():
         )
 
 
+async def get_notes_due_date(target_date):
+    async with pool.acquire() as conn:
+        return await conn.fetch(
+            """
+            SELECT user_id, text
+            FROM tg_bot_strih.writing_note_user
+            WHERE date_complete = $1
+            ORDER BY user_id
+            """,
+            target_date
+        )
+
+
 async def delete_user_note(note_id: int):
     async with pool.acquire() as conn:
         await conn.execute(
@@ -115,15 +178,43 @@ async def delete_user_note(note_id: int):
 # ─── Оплаты ──────────────────────────────────────────────────────────────────
 
 async def add_payment(user_id: int, name: str, category: str,
-                      planned_amount: float, planned_date):
+                      planned_amount: float, planned_date, day_of_month: int = None):
     async with pool.acquire() as conn:
         await conn.execute(
             """
             INSERT INTO tg_bot_strih.payments
-                (user_id, name, category, planned_amount, planned_date)
-            VALUES ($1, $2, $3, $4, $5)
+                (user_id, name, category, planned_amount, planned_date, day_of_month)
+            VALUES ($1, $2, $3, $4, $5, $6)
             """,
-            user_id, name, category, planned_amount, planned_date
+            user_id, name, category, planned_amount, planned_date, day_of_month
+        )
+
+
+async def add_expense(user_id: int, description: str, amount: float):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO tg_bot_strih.expenses (user_id, description, amount)
+            VALUES ($1, $2, $3)
+            """,
+            user_id, description, amount
+        )
+
+
+async def get_expenses_report(user_id: int):
+    from datetime import date
+    today = date.today()
+    first_day = today.replace(day=1)
+    async with pool.acquire() as conn:
+        return await conn.fetch(
+            """
+            SELECT description, amount, created_at
+            FROM tg_bot_strih.expenses
+            WHERE user_id = $1
+              AND created_at >= $2
+            ORDER BY created_at
+            """,
+            user_id, first_day
         )
 
 
@@ -144,7 +235,7 @@ async def get_payment_by_id(payment_id: int):
     async with pool.acquire() as conn:
         return await conn.fetchrow(
             """
-            SELECT id, name, planned_amount, planned_date
+            SELECT id, name, category, planned_amount, planned_date, day_of_month
             FROM tg_bot_strih.payments
             WHERE id = $1
             """,
