@@ -21,6 +21,8 @@ import calendar as cal_module
 
 import utilities
 from payments import router as payments_router, PaymentAddState
+from cycle import router as cycle_router
+from keyboards import button, button_female, cancel_keyboard, get_keyboard
 
 load_dotenv()
 
@@ -28,17 +30,7 @@ TOKEN = os.getenv("TG_BOT_TOKEN")
 
 dp = Dispatcher()
 dp.include_router(payments_router)
-
-button = ReplyKeyboardMarkup(keyboard=[
-    [KeyboardButton(text="🌤 Сводка на день")],
-    [KeyboardButton(text="Календарь"),    KeyboardButton(text="Мои задачи")],
-    [KeyboardButton(text="💳 Оплаты")],
-], resize_keyboard=True)
-
-cancel_keyboard = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="❌ Отмена")]],
-    resize_keyboard=True
-)
+dp.include_router(cycle_router)
 
 
 class ReminderState(StatesGroup):
@@ -53,6 +45,10 @@ class NoteAction(CallbackData, prefix="note"):
 
 class RepeatAction(CallbackData, prefix="repeat"):
     value: str  # none / daily / weekly / monthly
+
+
+class GenderAction(CallbackData, prefix="gender"):
+    value: str  # male / female
 
 
 REPEAT_LABELS = {
@@ -107,13 +103,37 @@ def _build_notes_message(notes) -> tuple[str, InlineKeyboardMarkup]:
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     user = message.from_user
+    existing = await database.get_user(user.id)
     await database.record_data_user([user.id, user.username, user.first_name])
-    await message.answer(
+
+    if not existing or existing["gender"] is None:
+        gender_kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="👨 Мужчина", callback_data=GenderAction(value="male").pack()),
+            InlineKeyboardButton(text="👩 Женщина", callback_data=GenderAction(value="female").pack()),
+        ]])
+        await message.answer("👋 Привет, я Штрих! Укажи свой пол:", reply_markup=gender_kb)
+    else:
+        kb = await get_keyboard(user.id)
+        await message.answer(
+            f"👋 Привет, я Штрих!\n"
+            f"📝 Записываю задачи, слежу за оплатами и напоминаю\n\n"
+            f"Вот что я умею:",
+            reply_markup=kb
+        )
+
+
+@dp.callback_query(GenderAction.filter())
+async def cb_set_gender(callback: CallbackQuery, callback_data: GenderAction):
+    await database.set_user_gender(callback.from_user.id, callback_data.value)
+    kb = button_female if callback_data.value == "female" else button
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
         f"👋 Привет, я Штрих!\n"
-        f"📝 Записываю задачи, слежу за оплатами и напоминаю в 9:00\n\n"
+        f"📝 Записываю задачи, слежу за оплатами и напоминаю\n\n"
         f"Вот что я умею:",
-        reply_markup=button
+        reply_markup=kb
     )
+    await callback.answer()
 
 
 @dp.message(Command("list"))
@@ -125,7 +145,8 @@ async def echo_list(message: Message):
 @dp.message(~StateFilter(default_state), F.text == "❌ Отмена")
 async def cancel_action(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("❌ Отменено.", reply_markup=button)
+    kb = await get_keyboard(message.from_user.id)
+    await message.answer("❌ Отменено.", reply_markup=kb)
 
 
 # ─── Сводка на день ──────────────────────────────────────────────────────────
@@ -219,10 +240,26 @@ async def process_calendar(
 
     current_state = await state.get_state()
 
-    if current_state == PaymentAddState.waiting_for_date.state:
+    fsm_data = await state.get_data()
+
+    if fsm_data.get("cycle_awaiting_date"):
+        await state.clear()
+        await database.add_cycle(callback.from_user.id, date.date())
+        history = await database.get_cycle_history(callback.from_user.id)
+        from cycle import _predict
+        predicted, avg = _predict(history)
+        kb = await get_keyboard(callback.from_user.id)
+        await callback.message.answer(
+            f"✅ Начало цикла отмечено: <b>{date.strftime('%d.%m.%Y')}</b>\n\n"
+            f"🔮 Следующий ожидается: <b>{predicted.strftime('%d.%m.%Y')}</b>\n"
+            f"📏 Средняя длина цикла: <b>{avg} дней</b>",
+            parse_mode="HTML",
+            reply_markup=kb
+        )
+
+    elif current_state == PaymentAddState.waiting_for_date.state:
         day = date.day
         next_date = _next_occurrence(day)
-        fsm_data = await state.get_data()
         await database.add_payment(
             user_id=callback.from_user.id,
             name=fsm_data["payment_name"],
@@ -286,13 +323,14 @@ async def choose_repeat(callback: CallbackQuery, callback_data: RepeatAction, st
         repeat=repeat,
     )
     repeat_label = REPEAT_LABELS.get(callback_data.value, "🚫 Без повтора")
+    kb = await get_keyboard(callback.from_user.id)
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer(
         f"📝 Задача сохранена!\n"
         f"📅 Дата: {selected_date.strftime('%d.%m.%Y')}\n"
         f"📌 Дело: {data['note_text']}\n"
         f"🔄 Повтор: {repeat_label}",
-        reply_markup=button
+        reply_markup=kb
     )
     await state.clear()
     await callback.answer()
@@ -385,6 +423,31 @@ async def send_daily_reminders(bot: Bot):
             pass
 
 
+# ─── Напоминания о цикле ─────────────────────────────────────────────────────
+
+async def send_cycle_reminders(bot: Bot):
+    from cycle import _predict, DEFAULT_CYCLE_DAYS
+    from datetime import date as date_type
+    rows = await database.get_upcoming_cycle_reminders()
+    today = date_type.today()
+    for row in rows:
+        history = await database.get_cycle_history(row["user_id"])
+        if not history:
+            continue
+        predicted, avg = _predict(history)
+        days_left = (predicted - today).days
+        if days_left == 2:
+            try:
+                await bot.send_message(
+                    row["user_id"],
+                    f"🌸 Напоминание: через <b>2 дня</b> ожидается начало цикла\n"
+                    f"📅 Дата: <b>{predicted.strftime('%d.%m.%Y')}</b>",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
+
+
 # ─── Запуск ───────────────────────────────────────────────────────────────────
 
 async def main():
@@ -394,6 +457,7 @@ async def main():
     scheduler = AsyncIOScheduler(timezone="Asia/Almaty")
     for hour in (9, 12, 15, 18, 20):
         scheduler.add_job(send_daily_reminders, "cron", hour=hour, minute=0, args=[bot])
+    scheduler.add_job(send_cycle_reminders, "cron", hour=9, minute=0, args=[bot])
     scheduler.start()
 
     await dp.start_polling(bot)

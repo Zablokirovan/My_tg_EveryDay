@@ -36,6 +36,20 @@ async def _migrate():
                 END IF;
             END $$;
         """)
+        # Добавить поле пола в user_info если нет
+        await conn.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'tg_bot_strih'
+                      AND table_name   = 'user_info'
+                      AND column_name  = 'gender'
+                ) THEN
+                    ALTER TABLE tg_bot_strih.user_info
+                        ADD COLUMN gender VARCHAR(10);
+                END IF;
+            END $$;
+        """)
         # Добавить поле повтора если нет
         await conn.execute("""
             DO $$ BEGIN
@@ -78,6 +92,15 @@ async def _migrate():
                 END IF;
             END $$;
         """)
+        # Таблица цикла
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS tg_bot_strih.cycle_tracking (
+                id         SERIAL PRIMARY KEY,
+                user_id    BIGINT    NOT NULL,
+                start_date DATE      NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
         # Таблица затрат
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS tg_bot_strih.expenses (
@@ -91,6 +114,22 @@ async def _migrate():
 
 
 # ─── Пользователи ────────────────────────────────────────────────────────────
+
+async def get_user(user_id: int):
+    async with pool.acquire() as conn:
+        return await conn.fetchrow(
+            "SELECT id_user, user_name, first_name, gender FROM tg_bot_strih.user_info WHERE id_user = $1",
+            user_id
+        )
+
+
+async def set_user_gender(user_id: int, gender: str):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE tg_bot_strih.user_info SET gender = $2 WHERE id_user = $1",
+            user_id, gender
+        )
+
 
 async def record_data_user(data: list):
     async with pool.acquire() as conn:
@@ -173,6 +212,46 @@ async def delete_user_note(note_id: int):
             "DELETE FROM tg_bot_strih.writing_note_user WHERE id = $1",
             note_id
         )
+
+
+# ─── Цикл ────────────────────────────────────────────────────────────────────
+
+async def add_cycle(user_id: int, start_date):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO tg_bot_strih.cycle_tracking (user_id, start_date)
+            VALUES ($1, $2)
+            """,
+            user_id, start_date
+        )
+
+
+async def get_cycle_history(user_id: int, limit: int = 6):
+    async with pool.acquire() as conn:
+        return await conn.fetch(
+            """
+            SELECT id, start_date
+            FROM tg_bot_strih.cycle_tracking
+            WHERE user_id = $1
+            ORDER BY start_date DESC
+            LIMIT $2
+            """,
+            user_id, limit
+        )
+
+
+async def get_upcoming_cycle_reminders():
+    """Возвращает пользователей, у которых прогноз цикла через 2 дня."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT ON (user_id) user_id, start_date
+            FROM tg_bot_strih.cycle_tracking
+            ORDER BY user_id, start_date DESC
+            """
+        )
+    return rows
 
 
 # ─── Оплаты ──────────────────────────────────────────────────────────────────
