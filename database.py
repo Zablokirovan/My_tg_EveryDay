@@ -163,7 +163,22 @@ async def get_user_notes(user_id: int):
             SELECT id, text, date_complete, repeat
             FROM tg_bot_strih.writing_note_user
             WHERE user_id = $1
+              AND date_complete <= CURRENT_DATE
             ORDER BY date_complete ASC
+            """,
+            user_id
+        )
+
+
+async def get_repeat_notes(user_id: int):
+    async with pool.acquire() as conn:
+        return await conn.fetch(
+            """
+            SELECT id, text, date_complete, repeat
+            FROM tg_bot_strih.writing_note_user
+            WHERE user_id = $1
+              AND repeat IS NOT NULL
+            ORDER BY text ASC
             """,
             user_id
         )

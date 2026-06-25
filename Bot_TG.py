@@ -38,6 +38,11 @@ class ReminderState(StatesGroup):
     waiting_for_repeat = State()
 
 
+class AddTaskState(StatesGroup):
+    waiting_for_text   = State()
+    waiting_for_repeat = State()
+
+
 class NoteAction(CallbackData, prefix="note"):
     action:  str
     note_id: int
@@ -49,6 +54,14 @@ class RepeatAction(CallbackData, prefix="repeat"):
 
 class GenderAction(CallbackData, prefix="gender"):
     value: str  # male / female
+
+
+class TaskMenuAction(CallbackData, prefix="task_menu"):
+    action: str  # add / delete_list
+
+
+class DeleteRepeatAction(CallbackData, prefix="del_repeat"):
+    note_id: int
 
 
 REPEAT_LABELS = {
@@ -94,7 +107,7 @@ def _build_notes_message(notes) -> tuple[str, InlineKeyboardMarkup]:
             text=f"✅ {label}",
             callback_data=NoteAction(action="done", note_id=note["id"]).pack()
         )])
-    text += "\n🟢 предстоит  🟡 сегодня  🔴 просрочено"
+    text += "\n🟡 сегодня  🔴 просрочено"
     return text, InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -310,7 +323,7 @@ async def save_note(message: Message, state: FSMContext):
     await message.answer("🔄 Задача повторяется?", reply_markup=repeat_kb)
 
 
-@dp.callback_query(RepeatAction.filter())
+@dp.callback_query(RepeatAction.filter(), StateFilter(ReminderState.waiting_for_repeat))
 async def choose_repeat(callback: CallbackQuery, callback_data: RepeatAction, state: FSMContext):
     data = await state.get_data()
     selected_date = datetime.strptime(data["selected_date"], "%d.%m.%Y").date()
@@ -380,6 +393,98 @@ async def complete_note(callback: CallbackQuery, callback_data: NoteAction):
     else:
         text, keyboard = _build_notes_message(notes)
         await callback.message.answer(text, reply_markup=keyboard)
+
+
+# ─── Управление повторяющимися задачами ──────────────────────────────────────
+
+@dp.message(F.text == "➕ Задачи")
+async def task_menu(message: Message):
+    menu_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить повторяющуюся задачу",
+                              callback_data=TaskMenuAction(action="add").pack())],
+        [InlineKeyboardButton(text="🗑 Удалить повторяющуюся задачу",
+                              callback_data=TaskMenuAction(action="delete_list").pack())],
+    ])
+    await message.answer("🔁 Управление повторяющимися задачами:", reply_markup=menu_kb)
+
+
+@dp.callback_query(TaskMenuAction.filter(F.action == "add"))
+async def add_task_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AddTaskState.waiting_for_text)
+    await callback.message.answer("📝 Введи название задачи:", reply_markup=cancel_keyboard)
+    await callback.answer()
+
+
+@dp.message(AddTaskState.waiting_for_text)
+async def add_task_text(message: Message, state: FSMContext):
+    await state.update_data(task_text=message.text)
+    await state.set_state(AddTaskState.waiting_for_repeat)
+    repeat_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔁 Ежедневно",   callback_data=RepeatAction(value="daily").pack()),
+            InlineKeyboardButton(text="🔂 Еженедельно", callback_data=RepeatAction(value="weekly").pack()),
+        ],
+        [
+            InlineKeyboardButton(text="🗓 Ежемесячно",  callback_data=RepeatAction(value="monthly").pack()),
+        ],
+    ])
+    await message.answer("🔄 Как часто повторяется задача?", reply_markup=repeat_kb)
+
+
+@dp.callback_query(RepeatAction.filter(), StateFilter(AddTaskState.waiting_for_repeat))
+async def add_task_choose_repeat(callback: CallbackQuery, callback_data: RepeatAction, state: FSMContext):
+    data = await state.get_data()
+    today = datetime.now().date()
+    repeat = callback_data.value
+    await database.writing_note_user(
+        user_id=callback.from_user.id,
+        date_create=datetime.now(),
+        text=data["task_text"],
+        date_complete=today,
+        repeat=repeat,
+    )
+    repeat_label = REPEAT_LABELS.get(repeat, "")
+    kb = await get_keyboard(callback.from_user.id)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
+        f"✅ Повторяющаяся задача добавлена!\n"
+        f"📌 {data['task_text']}\n"
+        f"🔄 Повтор: {repeat_label}",
+        reply_markup=kb
+    )
+    await state.clear()
+    await callback.answer()
+
+
+@dp.callback_query(TaskMenuAction.filter(F.action == "delete_list"))
+async def delete_repeat_list(callback: CallbackQuery):
+    notes = await database.get_repeat_notes(callback.from_user.id)
+    if not notes:
+        await callback.answer("У тебя нет повторяющихся задач", show_alert=True)
+        return
+    buttons = []
+    for note in notes:
+        repeat_icon = REPEAT_ICONS.get(note["repeat"] or "", "")
+        label = note["text"][:28] + ("…" if len(note["text"]) > 28 else "")
+        buttons.append([InlineKeyboardButton(
+            text=f"🗑 {label}{repeat_icon}",
+            callback_data=DeleteRepeatAction(note_id=note["id"]).pack()
+        )])
+    await callback.message.answer(
+        "🗑 Выбери задачу для удаления:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+    await callback.answer()
+
+
+@dp.callback_query(DeleteRepeatAction.filter())
+async def delete_repeat_confirm(callback: CallbackQuery, callback_data: DeleteRepeatAction):
+    note = await database.get_note_by_id(callback_data.note_id)
+    await database.delete_user_note(callback_data.note_id)
+    text = note["text"] if note else "Задача"
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(f"🗑 Задача «{text}» удалена.")
+    await callback.answer()
 
 
 # ─── Утренние напоминания ─────────────────────────────────────────────────────

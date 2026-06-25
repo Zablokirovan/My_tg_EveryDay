@@ -4,13 +4,13 @@ import database
 button = ReplyKeyboardMarkup(keyboard=[
     [KeyboardButton(text="🌤 Сводка на день")],
     [KeyboardButton(text="Календарь"),  KeyboardButton(text="Мои задачи")],
-    [KeyboardButton(text="💳 Оплаты")],
+    [KeyboardButton(text="➕ Задачи"),  KeyboardButton(text="💳 Оплаты")],
 ], resize_keyboard=True)
 
 button_female = ReplyKeyboardMarkup(keyboard=[
     [KeyboardButton(text="🌤 Сводка на день")],
     [KeyboardButton(text="Календарь"),  KeyboardButton(text="Мои задачи")],
-    [KeyboardButton(text="💳 Оплаты"), KeyboardButton(text="🌸 Цикл")],
+    [KeyboardButton(text="➕ Задачи"),  KeyboardButton(text="💳 Оплаты"), KeyboardButton(text="🌸 Цикл")],
 ], resize_keyboard=True)
 
 cancel_keyboard = ReplyKeyboardMarkup(
