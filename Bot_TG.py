@@ -16,6 +16,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import calendar as cal_module
 
@@ -164,6 +165,53 @@ async def cancel_action(message: Message, state: FSMContext):
 
 
 # ─── Сводка на день ──────────────────────────────────────────────────────────
+
+async def _build_daily_summary_parts() -> list[str]:
+    weather_data, money_data, errors = None, None, []
+
+    try:
+        weather_data = await utilities.weather()
+    except Exception:
+        errors.append("погода")
+
+    try:
+        money_data = await utilities.money()
+    except Exception:
+        errors.append("курсы валют")
+
+    if not weather_data and not money_data and not errors:
+        return []
+
+    parts = ["🌤 Сводка на день:"]
+
+    if weather_data:
+        temp = weather_data["main"]["temp"]
+        if temp >= 30:        emoji = "🥵"
+        elif temp >= 25:      emoji = "😓"
+        elif 15 <= temp < 25: emoji = "🥴"
+        elif temp <= -10:     emoji = "🥶"
+        else:                 emoji = "🙂"
+        parts.append(
+            f"Температура: {temp} °C {emoji}\n"
+            f"Ощущение: {weather_data['main']['feels_like']} °C\n"
+            f"Описание: {weather_data['weather'][0]['description']}\n"
+            f"💧 Влажность: {weather_data['main']['humidity']} %\n"
+            f"💨 Ветер: {weather_data['wind']['speed']} м/с"
+        )
+
+    if money_data:
+        parts.append(
+            f"💱 Курсы валют:\n"
+            f"🇺🇸 USD — {money_data['USD']}₸\n"
+            f"🇪🇺 EUR — {money_data['EUR']}₸\n"
+            f"🇷🇺 RUB — {money_data['RUB']}₸"
+        )
+
+    if errors:
+        parts.append(f"⚠️ Не удалось получить: {', '.join(errors)}.")
+
+    return parts
+
 
 @dp.message(F.text == "🌤 Сводка на день")
 async def daily_summary(message: Message):
@@ -517,16 +565,31 @@ async def send_daily_reminders(bot: Bot):
         tomorrow_by_user.setdefault(n["user_id"], []).append(n["text"])
 
     all_users = set(today_by_user) | set(tomorrow_by_user)
+    hour = datetime.now(ZoneInfo("Asia/Almaty")).hour
+
+    if hour == 9:
+        all_users |= set(await database.get_all_user_ids())
+
     if not all_users:
         return
 
+    summary_parts = await _build_daily_summary_parts() if hour == 9 else []
+
     for user_id in all_users:
-        parts = ["🌅 Доброе утро!\n"]
+        parts = []
+        if hour == 9:
+            parts.append("🌅 Доброе утро!\n")
+            if summary_parts:
+                parts.extend(summary_parts)
+                parts.append("")
 
         today_tasks = today_by_user.get(user_id)
         if today_tasks:
             parts.append("📋 Задачи на сегодня:")
             parts.extend(f"  • {t}" for t in today_tasks)
+        elif hour == 9:
+            parts.append("📋 Задачи на сегодня:")
+            parts.append("  ✅ Задач нет!")
         else:
             parts.append("✅ Задач на сегодня нет!")
 

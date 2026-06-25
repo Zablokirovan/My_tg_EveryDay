@@ -143,6 +143,12 @@ async def record_data_user(data: list):
         )
 
 
+async def get_all_user_ids() -> list[int]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT id_user FROM tg_bot_strih.user_info")
+        return [r["id_user"] for r in rows]
+
+
 # ─── Заметки / задачи ────────────────────────────────────────────────────────
 
 async def writing_note_user(user_id: int, date_create, text: str, date_complete, repeat: str = None):
