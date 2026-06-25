@@ -40,6 +40,7 @@ class ReminderState(StatesGroup):
 
 class AddTaskState(StatesGroup):
     waiting_for_text   = State()
+    waiting_for_date   = State()
     waiting_for_repeat = State()
 
 
@@ -270,6 +271,24 @@ async def process_calendar(
             reply_markup=kb
         )
 
+    elif current_state == AddTaskState.waiting_for_date.state:
+        await state.update_data(task_date=date.strftime("%d.%m.%Y"))
+        await state.set_state(AddTaskState.waiting_for_repeat)
+        repeat_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔁 Ежедневно",   callback_data=RepeatAction(value="daily").pack()),
+                InlineKeyboardButton(text="🔂 Еженедельно", callback_data=RepeatAction(value="weekly").pack()),
+            ],
+            [
+                InlineKeyboardButton(text="🗓 Ежемесячно",  callback_data=RepeatAction(value="monthly").pack()),
+            ],
+        ])
+        await callback.message.answer(
+            f"✅ Дата выбрана: {date.strftime('%d.%m.%Y')}\n"
+            f"🔄 Как часто повторяется задача?",
+            reply_markup=repeat_kb
+        )
+
     elif current_state == PaymentAddState.waiting_for_date.state:
         day = date.day
         next_date = _next_occurrence(day)
@@ -418,29 +437,23 @@ async def add_task_start(callback: CallbackQuery, state: FSMContext):
 @dp.message(AddTaskState.waiting_for_text)
 async def add_task_text(message: Message, state: FSMContext):
     await state.update_data(task_text=message.text)
-    await state.set_state(AddTaskState.waiting_for_repeat)
-    repeat_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🔁 Ежедневно",   callback_data=RepeatAction(value="daily").pack()),
-            InlineKeyboardButton(text="🔂 Еженедельно", callback_data=RepeatAction(value="weekly").pack()),
-        ],
-        [
-            InlineKeyboardButton(text="🗓 Ежемесячно",  callback_data=RepeatAction(value="monthly").pack()),
-        ],
-    ])
-    await message.answer("🔄 Как часто повторяется задача?", reply_markup=repeat_kb)
+    await state.set_state(AddTaskState.waiting_for_date)
+    await message.answer(
+        "📅 Выбери дату начала задачи:",
+        reply_markup=await SimpleCalendar().start_calendar()
+    )
 
 
 @dp.callback_query(RepeatAction.filter(), StateFilter(AddTaskState.waiting_for_repeat))
 async def add_task_choose_repeat(callback: CallbackQuery, callback_data: RepeatAction, state: FSMContext):
     data = await state.get_data()
-    today = datetime.now().date()
+    selected_date = datetime.strptime(data["task_date"], "%d.%m.%Y").date()
     repeat = callback_data.value
     await database.writing_note_user(
         user_id=callback.from_user.id,
         date_create=datetime.now(),
         text=data["task_text"],
-        date_complete=today,
+        date_complete=selected_date,
         repeat=repeat,
     )
     repeat_label = REPEAT_LABELS.get(repeat, "")
